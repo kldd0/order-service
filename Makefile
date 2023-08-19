@@ -33,6 +33,9 @@ precommit: format build test lint
 dc:
 	docker-compose up --remove-orphans --build
 
+dcd:
+	docker-compose up --remove-orphans --build -d
+
 install-lint: bindir
 	test -f ${LINTBIN} || \
 		(GOBIN=${BINDIR} go install github.com/golangci/golangci-lint/cmd/golangci-lint@${LINTVER} && \

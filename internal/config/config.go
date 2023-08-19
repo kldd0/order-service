@@ -2,6 +2,7 @@ package config
 
 import (
 	"os"
+	"time"
 
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
@@ -10,8 +11,13 @@ import (
 const configFile = "data/config.yaml"
 
 type Config struct {
-	Port  int    `yaml:"port"`
-	DBuri string `yaml:"database_url"`
+	DSN        string `yaml:"dsn"`
+	HTTPServer `yaml:"http_server"`
+}
+
+type HTTPServer struct {
+	Address string        `yaml:"address"`
+	Timeout time.Duration `yaml:"timeout"`
 }
 
 type Service struct {
@@ -34,10 +40,14 @@ func New() (*Service, error) {
 	return s, nil
 }
 
-func (s Service) Port() int {
-	return s.config.Port
+func (s Service) DSN() string {
+	return s.config.DSN
 }
 
-func (s Service) DBuri() string {
-	return s.config.DBuri
+func (s Service) HTTPAddr() string {
+	return s.config.HTTPServer.Address
+}
+
+func (s Service) Timeout() time.Duration {
+	return s.config.HTTPServer.Timeout
 }

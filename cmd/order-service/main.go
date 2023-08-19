@@ -1,16 +1,39 @@
 package main
 
 import (
+	"fmt"
 	"log"
-	"os"
+	"net/http"
 	"test-task/order-service/internal/config"
+
+	"github.com/gorilla/mux"
 )
 
 func main() {
-	_, err := config.New()
+	// config initialization
+	config, err := config.New()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	os.Exit(0)
+	// create http router
+	router := mux.NewRouter()
+
+	router.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "pong")
+	}).Methods("GET")
+
+	srv := &http.Server{
+		Addr:    config.HTTPAddr(),
+		Handler: router,
+	}
+
+	log.Printf("Starting HTTP server on %s", config.HTTPAddr())
+
+	// start http server
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatalf("HTTP server ListenAndServe Error: %v", err)
+	}
 }
