@@ -20,7 +20,7 @@ func main() {
 	router := mux.NewRouter()
 
 	router.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text; charset=utf-8")
+		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 		w.WriteHeader(http.StatusOK)
 		fmt.Fprintf(w, "pong")
 	}).Methods("GET")
