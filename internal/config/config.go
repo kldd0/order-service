@@ -1,10 +1,10 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"time"
 
-	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 )
 
@@ -12,6 +12,7 @@ const configFile = "data/config.yaml"
 
 type Config struct {
 	DSN        string `yaml:"dsn"`
+	NATSAddr   string `yaml:"nats_addr"`
 	HTTPServer `yaml:"http_server"`
 }
 
@@ -25,16 +26,18 @@ type Service struct {
 }
 
 func New() (*Service, error) {
+	const op = "config.New"
+
 	var s *Service = &Service{}
 
 	data, err := os.ReadFile(configFile)
 	if err != nil {
-		return nil, errors.Wrap(err, "Service.New: failed reading config file")
+		return nil, fmt.Errorf("%s: reading file: %w", op, err)
 	}
 
 	err = yaml.Unmarshal(data, &s.config)
 	if err != nil {
-		return nil, errors.Wrap(err, "Service.New: failed parsing yaml file")
+		return nil, fmt.Errorf("%s: unmarshaling yaml: %w", op, err)
 	}
 
 	return s, nil
@@ -42,6 +45,10 @@ func New() (*Service, error) {
 
 func (s Service) DSN() string {
 	return s.config.DSN
+}
+
+func (s Service) NATSAddr() string {
+	return s.config.NATSAddr
 }
 
 func (s Service) HTTPAddr() string {

@@ -2,15 +2,19 @@ package postgres
 
 import (
 	"context"
+	"fmt"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/pkg/errors"
 )
 
 const dbDriver = "pgx"
 
 const initSchema = `
 CREATE TABLE IF NOT EXISTS orders (
+	id SERIAL PRIMARY KEY,
+  	data JSONB
 );
 `
 
@@ -19,9 +23,11 @@ type Storage struct {
 }
 
 func New(dbUri string) (*Storage, error) {
+	const op = "storage.postgres.New"
+
 	db, err := sqlx.Open(dbDriver, dbUri)
 	if err != nil {
-		return nil, errors.Wrap(err, "Connecting to database")
+		return nil, fmt.Errorf("%s: open db connection: %w", op, err)
 	}
 
 	return &Storage{
@@ -29,11 +35,17 @@ func New(dbUri string) (*Storage, error) {
 	}, nil
 }
 
-func (s Storage) InitDB(ctx context.Context) error {
+func (s *Storage) InitDB(ctx context.Context) error {
+	const op = "storage.postgres.InitDB"
+
 	_, err := s.db.ExecContext(ctx, initSchema)
 	if err != nil {
-		return errors.Wrap(err, "initializing the table")
+		return fmt.Errorf("%s: creating table: %w", op, err)
 	}
 
 	return nil
+}
+
+func (s *Storage) Close() error {
+	return s.db.Close()
 }

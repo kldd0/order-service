@@ -8,6 +8,22 @@ services:
     restart: on-failure
     ports:
       - 8080:8080
+    depends_on:
+      - nats-streaming
+      - postgres
+    links:
+      - "nats-streaming:nats"
+
+  nats-streaming:
+    image: nats-streaming:latest
+    ports:
+      - 4222:4222
+      - 6222:6222
+      - 8222:8222
+    restart: always
+    command: --store file --dir /data/msg -c /data/nats-server.conf
+    volumes:
+      - ./nats-server.conf:/data/nats-server.conf
 
   postgres:
     image: postgres:latest
