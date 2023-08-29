@@ -7,13 +7,15 @@ import (
 	"log"
 	"net/http"
 	"os"
-	"strconv"
+	"os/signal"
+	"syscall"
 	"test-task/order-service/internal/config"
+	"test-task/order-service/internal/http-server/handlers/order/get"
+	logger "test-task/order-service/internal/http-server/middleware"
 	"test-task/order-service/internal/nats-streaming/subscriber"
 	"test-task/order-service/internal/schema"
 	"test-task/order-service/internal/service"
 	"test-task/order-service/internal/storage/postgres"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
@@ -22,13 +24,17 @@ import (
 )
 
 func main() {
-	// config init
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// setup logger [dev] -- debug
+	log := log.Default()
+
+	// init config
 	config, err := config.New()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error: failed initializing config: ", err)
 	}
-
-	ctx := context.Background()
 
 	s, err := postgres.New(config.DSN())
 
@@ -65,10 +71,12 @@ func main() {
 	}
 
 	// start producer app
-	go publisher(nc)
+	go publisher(log, nc)
 
 	// create http router
 	router := mux.NewRouter()
+
+	router.Use(logger.New(log))
 
 	router.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=UTF-8")
@@ -76,11 +84,10 @@ func main() {
 		fmt.Fprint(w, "pong")
 	}).Methods("GET")
 
-	router.HandleFunc("/orders/{id:[0-9]+}", func(w http.ResponseWriter, r *http.Request) {
-		id, _ := strconv.Atoi(mux.Vars(r)["id"])
+	router.HandleFunc("/orders/{id:[0-9]+}", get.New(log, s)).Methods("GET")
 
-		fmt.Fprintf(w, "/orders/{id:[0-9]+}: %d\n", id)
-	}).Methods("GET")
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
 	srv := &http.Server{
 		Addr:    config.HTTPAddr(),
@@ -92,22 +99,32 @@ func main() {
 	// start business logic
 	go svc.Run(ch)
 
-	log.Printf("Starting HTTP server on %s", config.HTTPAddr())
+	go func() {
+		// start http server
+		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+			log.Fatal("Error: HTTP server ListenAndServe error: ", err)
+		}
+	}()
 
-	// start http server
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatalf("HTTP server ListenAndServe error: %v", err)
+	log.Printf("Starting HTTP server on: %s", config.HTTPAddr())
+
+	<-done
+	log.Print("Stopping server")
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal("Error: failed to stop server: ", err)
+		return
 	}
 }
 
-func publisher(nc *nats.Conn) {
+func publisher(log *log.Logger, nc *nats.Conn) {
 	const channel = "order-notification"
 
-	log.Println("pub started")
+	log.Print("Publisher started")
 
 	data, err := os.ReadFile("data/model.json")
 	if err != nil {
-		log.Fatal("failed reading file")
+		log.Fatal("Error: failed reading file: ", err)
 	}
 
 	var order schema.Order
@@ -115,33 +132,33 @@ func publisher(nc *nats.Conn) {
 
 	sc, err := stan.Connect("dev", "order-producer", stan.NatsConn(nc),
 		stan.SetConnectionLostHandler(func(_ stan.Conn, reason error) {
-			log.Fatalf("NATS Connection lost, reason: %v", reason)
+			log.Fatal("Error: NATS connection lost, reason: ", reason)
 		}))
 
 	if err != nil {
-		log.Fatal("publisher failed connecting to cluster")
+		log.Fatal("Error: publisher failed connecting to cluster: ", err)
 	}
 
-	for i := 0; i < 100000; i++ {
+	for i := 0; i < 10; i++ {
 		uuid := uuid.NewString()
 		order.OrderUid = uuid[:19]
 
 		data, err = json.Marshal(order)
 		if err != nil {
-			log.Println("failed marshal data")
+			log.Fatal("Error: failed marshal data: ", err)
 		}
 
 		if err := sc.Publish(channel, data); err != nil {
-			log.Fatal(err)
+			log.Fatal("Error: failed publish message: ", err)
 		}
 
 		if (i % 100) == 0 {
-			fmt.Println("i", i)
+			log.Printf("Messages count statistics: %d", i)
 		}
-		time.Sleep(time.Millisecond * 1)
+		// time.Sleep(time.Millisecond * 1)
 	}
 
-	log.Println("pub finished")
+	log.Print("Publisher finished")
 
 	errFlush := nc.Flush()
 	if errFlush != nil {

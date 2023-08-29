@@ -36,7 +36,7 @@ func New(nc *nats.Conn) (*orderSubscriber, error) {
 		return nil, fmt.Errorf("%s: connecting to cluster: %w", op, err)
 	}
 
-	log.Printf("[INF] Connected to %s clusterID: [%s] clientID: [%s]\n", nats.DefaultURL, clusterID, clientID)
+	log.Printf("Connected to %s clusterID: [%s] clientID: [%s]\n", nats.DefaultURL, clusterID, clientID)
 
 	return &orderSubscriber{
 		sc:       sc,
@@ -47,7 +47,7 @@ func New(nc *nats.Conn) (*orderSubscriber, error) {
 func (s *orderSubscriber) Subscribe() (recvChan <-chan stan.Msg, err error) {
 	const op = "nats-streaming.consumer.Subscribe"
 
-	// Subscribe with manual ack mode, and set AckWait to 60 seconds
+	// Subscribe with manual ack mode
 	aw, _ := time.ParseDuration("60s")
 	s.sub, err = s.sc.Subscribe(
 		channel,
@@ -66,7 +66,7 @@ func (s *orderSubscriber) Subscribe() (recvChan <-chan stan.Msg, err error) {
 		return nil, fmt.Errorf("%s: subscribing to a channel: %w", op, err)
 	}
 
-	log.Printf("[INF] Subscribed to the channel: [%s] clientID: [%s]\n", channel, clientID)
+	log.Printf("Subscribed to the channel: [%s] clientID: [%s]\n", channel, clientID)
 
 	return s.recvChan, nil
 }

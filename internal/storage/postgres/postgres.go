@@ -2,9 +2,11 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"test-task/order-service/internal/schema"
+	"test-task/order-service/internal/storage"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 
@@ -69,6 +71,10 @@ func (s *Storage) Get(ctx context.Context, orderId int) (*schema.Order, error) {
 	var data []byte
 
 	err := s.db.QueryRowContext(ctx, q, orderId).Scan(&data)
+
+	if err == sql.ErrNoRows {
+		return nil, storage.ErrEntryDoesntExists
+	}
 
 	if err != nil {
 		return nil, fmt.Errorf("%s: getting entry: %w", op, err)
