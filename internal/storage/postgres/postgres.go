@@ -4,8 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"test-task/order-service/internal/schema"
+	"test-task/order-service/internal/domain"
 	"test-task/order-service/internal/storage"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -17,9 +18,9 @@ const dbDriver = "pgx"
 
 const initSchema = `
 CREATE TABLE IF NOT EXISTS orders (
-	id SERIAL PRIMARY KEY,
+	id CHAR(19) PRIMARY KEY,
 	data JSONB NOT NULL,
-	UNIQUE (data)
+	UNIQUE (id, data)
 );
 `
 
@@ -51,36 +52,46 @@ func (s *Storage) InitDB(ctx context.Context) error {
 	return nil
 }
 
-func (s *Storage) Save(ctx context.Context, order schema.Order) error {
+func (s *Storage) Save(ctx context.Context, order domain.Order) error {
 	const op = "storage.postgres.Save"
 
-	q := `INSERT INTO orders (data) VALUES ($1)`
+	q := `INSERT INTO orders (id, data) VALUES ($1, $2)`
 
-	if _, err := s.db.ExecContext(ctx, q, order); err != nil {
-		return fmt.Errorf("%s: inserting entry: %w", op, err)
+	stmt, err := s.db.PrepareContext(ctx, q)
+	if err != nil {
+		return fmt.Errorf("%s: prepare statement: %w", op, err)
+	}
+
+	if _, err := stmt.ExecContext(ctx, order.OrderUid, order); err != nil {
+		return fmt.Errorf("%s: saving entry: %w", op, err)
 	}
 
 	return nil
 }
 
-func (s *Storage) Get(ctx context.Context, orderId int) (*schema.Order, error) {
+func (s *Storage) Get(ctx context.Context, orderId string) (*domain.Order, error) {
 	const op = "storage.postgres.Get"
 
 	q := `SELECT data FROM orders WHERE id=$1`
 
+	stmt, err := s.db.PrepareContext(ctx, q)
+	if err != nil {
+		return nil, fmt.Errorf("%s: prepare statement: %w", op, err)
+	}
+
 	var data []byte
 
-	err := s.db.QueryRowContext(ctx, q, orderId).Scan(&data)
-
-	if err == sql.ErrNoRows {
-		return nil, storage.ErrEntryDoesntExists
-	}
+	err = stmt.QueryRowContext(ctx, orderId).Scan(&data)
 
 	if err != nil {
-		return nil, fmt.Errorf("%s: getting entry: %w", op, err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, storage.ErrEntryDoesntExists
+		}
+
+		return nil, fmt.Errorf("%s: execute statement: %w", op, err)
 	}
 
-	var order schema.Order
+	var order domain.Order
 	err = json.Unmarshal(data, &order)
 
 	if err != nil {

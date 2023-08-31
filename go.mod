@@ -4,6 +4,7 @@ go 1.21.0
 
 require (
 	github.com/go-playground/validator v9.31.0+incompatible
+	github.com/golang/mock v1.6.0
 	github.com/google/uuid v1.3.1
 	github.com/gorilla/mux v1.8.0
 	github.com/jackc/pgx/v5 v5.4.3

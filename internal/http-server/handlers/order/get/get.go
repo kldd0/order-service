@@ -6,46 +6,57 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strconv"
+	"test-task/order-service/internal/cache"
+	"test-task/order-service/internal/domain"
 	http_server "test-task/order-service/internal/http-server"
-	"test-task/order-service/internal/schema"
 	"test-task/order-service/internal/storage"
 
 	"github.com/gorilla/mux"
 )
 
 type OrderGetter interface {
-	Get(ctx context.Context, orderId int) (*schema.Order, error)
+	Get(ctx context.Context, orderId string) (*domain.Order, error)
 }
 
-func New(log *log.Logger, orderGetter OrderGetter) http.HandlerFunc {
+func New(log *log.Logger, orderGetter OrderGetter, cache cache.Cache) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		const op = "handlers.order.get.New"
 
-		id, err := strconv.Atoi(mux.Vars(r)["id"])
+		uid := mux.Vars(r)["order_uid"]
 
-		if err != nil {
+		if uid == "" {
 			log.Printf("%s: id is incorrect", op)
-			RespondOK(http_server.Error("invalid request"), w, r)
+			RespondWithError(errors.New("id is empty"), w, r, "invalid request", http.StatusBadRequest)
 			return
 		}
 
-		resOrder, err := orderGetter.Get(r.Context(), id)
+		// looking for order in cache
+		resOrder := cache.Get(uid)
+
+		if resOrder != nil {
+			log.Printf("got order from cache with id: [%s]", uid)
+			RespondOK(resOrder, w, r)
+			return
+		}
+
+		resOrder, err := orderGetter.Get(r.Context(), uid)
 
 		if errors.Is(err, storage.ErrEntryDoesntExists) {
-			log.Printf("%s: order with id: [%d] not found", op, id)
-			RespondOK(http_server.Error("not found"), w, r)
+			log.Printf("%s: order with id: [%s] not found", op, uid)
+			RespondWithError(err, w, r, "not found", http.StatusNotFound)
 			return
 		}
 
 		if err != nil {
-			log.Printf("%s: failed to get order with id: [%d] error: %v", op, id, err)
-			RespondOK(http_server.Error("internal error"), w, r)
+			log.Printf("%s: failed to get order with id: [%s] error: %v", op, uid, err)
+			RespondWithError(err, w, r, "internal error", http.StatusInternalServerError)
 			return
 		}
 
-		log.Printf("got order with id: [%d]", id)
+		log.Printf("got order with id: [%s]", uid)
 
+		// adding element to cache
+		cache.Add(uid, resOrder)
 		RespondOK(resOrder, w, r)
 	}
 }
@@ -54,4 +65,14 @@ func RespondOK(data any, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(data)
+}
+
+func RespondWithError(err error, w http.ResponseWriter, r *http.Request, msg string, status int) {
+	log.Printf("error: %s", err)
+
+	resp := http_server.Error(msg)
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(resp)
 }

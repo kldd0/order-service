@@ -3,12 +3,12 @@ package storage
 import (
 	"context"
 	"fmt"
-	"test-task/order-service/internal/schema"
+	"test-task/order-service/internal/domain"
 )
 
 type Storage interface {
-	Save(ctx context.Context, order schema.Order) error
-	Get(ctx context.Context, orderId int) (*schema.Order, error)
+	Save(ctx context.Context, order domain.Order) error
+	Get(ctx context.Context, orderId string) (*domain.Order, error)
 }
 
 var (

@@ -9,15 +9,17 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"test-task/order-service/internal/cache"
 	"test-task/order-service/internal/config"
+	"test-task/order-service/internal/domain"
 	"test-task/order-service/internal/http-server/handlers/order/get"
 	logger "test-task/order-service/internal/http-server/middleware"
 	"test-task/order-service/internal/nats-streaming/subscriber"
-	"test-task/order-service/internal/schema"
 	"test-task/order-service/internal/service"
 	"test-task/order-service/internal/storage/postgres"
+	"test-task/order-service/internal/utils"
+	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/stan.go"
@@ -36,20 +38,19 @@ func main() {
 		log.Fatal("Error: failed initializing config: ", err)
 	}
 
-	s, err := postgres.New(config.DSN())
+	db, err := postgres.New(config.DSN())
 
 	if err != nil {
 		log.Fatal("Error: failed connecting to database: ", err)
 	}
-	defer s.Close()
+	defer db.Close()
 
-	if err := s.InitDB(ctx); err != nil {
+	if err := db.InitDB(ctx); err != nil {
 		log.Fatal("Error: failed initializing storage: ", err)
 	}
 
 	// init nats connection
 	nc, err := nats.Connect(fmt.Sprintf("nats://%s", config.NATSAddr()))
-	// nc, err := nats.Connect(nats.DefaultURL)
 
 	if err != nil {
 		log.Fatal("Error: failed connecting to NATS: ", err)
@@ -70,12 +71,22 @@ func main() {
 		log.Fatal("Error: subscribe to cluster: ", err)
 	}
 
-	// start producer app
-	go publisher(log, nc)
+	// main service init
+	svc := service.New(ctx, db)
+
+	// start business logic
+	go svc.Run(ch)
+
+	// creating cache
+	cache := cache.New(200)
+	if err := cache.RestoreFromDB(log, ctx, config.DSN()); err != nil {
+		log.Print("Error: failed restore cache: ", err)
+	}
 
 	// create http router
 	router := mux.NewRouter()
 
+	// logger mw
 	router.Use(logger.New(log))
 
 	router.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {
@@ -84,40 +95,54 @@ func main() {
 		fmt.Fprint(w, "pong")
 	}).Methods("GET")
 
-	router.HandleFunc("/orders/{id:[0-9]+}", get.New(log, s)).Methods("GET")
+	router.HandleFunc("/orders/{order_uid:[a-z0-9]{19}}", get.New(log, db, cache)).Methods("GET")
+
+	srv := &http.Server{
+		Addr:         config.HTTPAddr(),
+		Handler:      router,
+		ReadTimeout:  config.Timeout(),
+		WriteTimeout: config.Timeout(),
+		IdleTimeout:  time.Second * 30,
+	}
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	srv := &http.Server{
-		Addr:    config.HTTPAddr(),
-		Handler: router,
-	}
+	// start event publisher app
+	go publisher(10341, log, nc)
 
-	svc := service.New(ctx, s)
-
-	// start business logic
-	go svc.Run(ch)
-
+	stopped := make(chan struct{})
 	go func() {
-		// start http server
-		if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-			log.Fatal("Error: HTTP server ListenAndServe error: ", err)
+		sigint := make(chan os.Signal, 1)
+		signal.Notify(sigint, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+		<-sigint
+		ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+
+		// saving cache to DB
+		if err := cache.EvacuateToDB(log, config.DSN()); err != nil {
+			log.Fatal("Error: failed evacuate cache: ", err)
 		}
+		log.Printf("Cache evacuated successfully, length: [%d]", cache.Len())
+
+		log.Print("Stopping server")
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Printf("HTTP Server Shutdown Error: %v", err)
+		}
+		close(stopped)
 	}()
 
 	log.Printf("Starting HTTP server on: %s", config.HTTPAddr())
 
-	<-done
-	log.Print("Stopping server")
-
-	if err := srv.Shutdown(ctx); err != nil {
-		log.Fatal("Error: failed to stop server: ", err)
-		return
+	// start http server
+	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
+		log.Fatal("Error: HTTP server ListenAndServe error: ", err)
 	}
+
+	<-stopped
 }
 
-func publisher(log *log.Logger, nc *nats.Conn) {
+func publisher(ordersCount int, log *log.Logger, nc *nats.Conn) {
 	const channel = "order-notification"
 
 	log.Print("Publisher started")
@@ -127,7 +152,7 @@ func publisher(log *log.Logger, nc *nats.Conn) {
 		log.Fatal("Error: failed reading file: ", err)
 	}
 
-	var order schema.Order
+	var order domain.Order
 	_ = json.Unmarshal(data, &order)
 
 	sc, err := stan.Connect("dev", "order-producer", stan.NatsConn(nc),
@@ -139,9 +164,23 @@ func publisher(log *log.Logger, nc *nats.Conn) {
 		log.Fatal("Error: publisher failed connecting to cluster: ", err)
 	}
 
-	for i := 0; i < 10; i++ {
-		uuid := uuid.NewString()
-		order.OrderUid = uuid[:19]
+	fo, err := os.Create("data/uids.txt")
+	if err != nil {
+		panic(err)
+	}
+
+	defer func() {
+		if err := fo.Close(); err != nil {
+			panic(err)
+		}
+	}()
+
+	for i := 0; i < ordersCount; i++ {
+		uid := utils.GenerateUID19v2()
+		fo.Write([]byte(uid + "\n"))
+
+		order.OrderUid = uid
+		order.DateCreated = time.Now()
 
 		data, err = json.Marshal(order)
 		if err != nil {
@@ -155,7 +194,8 @@ func publisher(log *log.Logger, nc *nats.Conn) {
 		if (i % 100) == 0 {
 			log.Printf("Messages count statistics: %d", i)
 		}
-		// time.Sleep(time.Millisecond * 1)
+
+		time.Sleep(time.Millisecond * 1)
 	}
 
 	log.Print("Publisher finished")

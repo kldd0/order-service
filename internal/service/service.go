@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"test-task/order-service/internal/schema"
+	"test-task/order-service/internal/domain"
 	"test-task/order-service/internal/storage"
 
 	"github.com/go-playground/validator"
@@ -40,7 +40,7 @@ func (s *Service) Run(msgChan <-chan stan.Msg) {
 func (s *Service) ProcessMessage(msg stan.Msg) error {
 	const op = "service.ProcessMessage"
 
-	var order schema.Order
+	var order domain.Order
 	err := json.Unmarshal(msg.Data, &order)
 
 	if err != nil {
@@ -48,8 +48,7 @@ func (s *Service) ProcessMessage(msg stan.Msg) error {
 	}
 
 	if err := validator.New().Struct(order); err != nil {
-		// validateErr := err.(validator.ValidationErrors)
-		return fmt.Errorf("%s: invalid data: %w", op, err)
+		return fmt.Errorf("%s: invalid data: %w", op, err.(validator.ValidationErrors))
 	}
 
 	if err = s.db.Save(s.ctx, order); err != nil {

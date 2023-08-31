@@ -1,4 +1,4 @@
-package schema
+package domain
 
 import (
 	"encoding/json"
