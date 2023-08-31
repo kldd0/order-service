@@ -143,7 +143,7 @@ func (c *LRUCache) EvacuateToDB(log *log.Logger, dbUri string) error {
 		order := elem.Value.(*Item).Value.(*domain.Order)
 
 		if _, err := stmt.Exec(order.OrderUid, order); err != nil {
-			return fmt.Errorf("%s: saving entry: %w", op, err)
+			log.Print(fmt.Errorf("%s: saving entry: %w", op, err))
 		}
 
 		count++
